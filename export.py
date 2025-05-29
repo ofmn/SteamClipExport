@@ -27,9 +27,8 @@ def extract_cs2_clip_label(timeline_path):
             data = json.load(f)
         entries = data.get('entries', [])
 
-        # Step 1: Find the LAST "Start of round" event in the timeline
-        round_start = None
-        map_name = None
+        # Step 1: Find ALL "Start of round" events in the timeline
+        round_starts = []
         
         for i, e in enumerate(entries):
             if (
@@ -37,123 +36,136 @@ def extract_cs2_clip_label(timeline_path):
                 e.get('title', '').startswith('Start of round') and
                 'description' in e
             ):
-                round_start = {'index': i, 'time': int(e['time'])}
-                map_name = e['description']
+                round_starts.append({
+                    'index': i, 
+                    'time': int(e['time']),
+                    'map': e['description']
+                })
 
-        if not round_start:
+        if not round_starts:
             return ''
 
-        # Step 2: Find the next round start to define the round boundary (if any)
-        round_end_time = None
-        for i, e in enumerate(entries[round_start['index'] + 1:], start=round_start['index'] + 1):
-            if (
-                e.get('type') == 'event' and
-                e.get('title', '').startswith('Start of round')
-            ):
-                round_end_time = int(e['time'])
-                break
-
-        # Step 3: Count ALL kills from the round start to end of timeline (or next round)
-        kill_events = []
-        multi_kill_events = []
-        
-        for e in entries[round_start['index']:]:
-            t = int(e['time'])
-            if round_end_time and t >= round_end_time:
-                break
-            if e.get('type') == 'event':
-                title = e.get('title', '')
-                
-                # Collect individual kill events
-                if title.startswith('You killed ') and title != 'You killed yourself' and not any(kw in title for kw in ['Double kill', 'Triple kill', 'Quad kill', 'Ace', 'Multi kill']):
-                    kill_events.append({
-                        'time': t,
-                        'title': title,
-                        'type': 'individual'
-                    })
-                
-                # Collect multi-kill events
-                elif any(kw in title for kw in ['Double kill', 'Triple kill', 'Quad kill', 'Ace', 'Multi kill']):
-                    multi_kill_events.append({
-                        'time': t,
-                        'title': title,
-                        'description': e.get('description', ''),
-                        'type': 'multi'
-                    })
-
-        # Count kills from individual events
-        kill_count = 0
-        for event in kill_events:
-            title = event['title']
-            # Try to extract victim names from "You killed X with Y" or "You killed X and Y with Z"
-            match = re.search(r'You killed (.+?)(?:\s+with|$)', title)
-            if match:
-                victims_part = match.group(1)
-                # Split by "and" to handle multiple victims in one event
-                victims = re.split(r' and ', victims_part)
-                individual_kills = len([v for v in victims if v.strip()])
-                kill_count += individual_kills
-            else:
-                # Fallback: if regex fails, assume it's one kill
-                kill_count += 1
-
-        # Add kills from multi-kill events
-        for event in multi_kill_events:
-            title = event['title']
-            description = event['description']
+        # Step 2: Try rounds starting from the last one, working backwards
+        for round_idx in range(len(round_starts) - 1, -1, -1):
+            round_start = round_starts[round_idx]
+            map_name = round_start['map']
             
-            # Try to extract victim names from description
-            multi_kill_count = 0
-            if 'You killed' in description:
-                # Try with weapon info first: "You killed X and Y with the Z"
-                match = re.search(r'You killed (.+?) with', description)
+            # Find the next round start to define the round boundary (if any)
+            round_end_time = None
+            if round_idx < len(round_starts) - 1:
+                round_end_time = round_starts[round_idx + 1]['time']
+
+            # Step 3: Count kills in this round
+            kill_events = []
+            multi_kill_events = []
+            
+            for e in entries[round_start['index']:]:
+                t = int(e['time'])
+                if round_end_time and t >= round_end_time:
+                    break
+                if e.get('type') == 'event':
+                    title = e.get('title', '')
+                    
+                    # Collect individual kill events
+                    if title.startswith('You killed ') and title != 'You killed yourself' and not any(kw in title for kw in ['Double kill', 'Triple kill', 'Quad kill', 'Ace', 'Multi kill']):
+                        kill_events.append({
+                            'time': t,
+                            'title': title,
+                            'type': 'individual'
+                        })
+                    
+                    # Collect multi-kill events
+                    elif any(kw in title for kw in ['Double kill', 'Triple kill', 'Quad kill', 'Ace', 'Multi kill']):
+                        multi_kill_events.append({
+                            'time': t,
+                            'title': title,
+                            'description': e.get('description', ''),
+                            'type': 'multi'
+                        })
+
+            # Count kills from individual events
+            kill_count = 0
+            for event in kill_events:
+                title = event['title']
+                # Try to extract victim names from "You killed X with Y" or "You killed X and Y with Z"
+                match = re.search(r'You killed (.+?)(?:\s+with|$)', title)
                 if match:
                     victims_part = match.group(1)
-                    victims = re.split(r' and |, ', victims_part)
-                    multi_kill_count = len([v for v in victims if v.strip()])
+                    # Split by "and" to handle multiple victims in one event
+                    victims = re.split(r' and ', victims_part)
+                    individual_kills = len([v for v in victims if v.strip()])
+                    kill_count += individual_kills
                 else:
-                    # Try without weapon info: "You killed X, Y, and Z"
-                    match = re.search(r'You killed (.+)', description)
+                    # Fallback: if regex fails, assume it's one kill
+                    kill_count += 1
+
+            # Add kills from multi-kill events
+            for event in multi_kill_events:
+                title = event['title']
+                description = event['description']
+                
+                # Try to extract victim names from description
+                multi_kill_count = 0
+                if 'You killed' in description:
+                    # Try with weapon info first: "You killed X and Y with the Z"
+                    match = re.search(r'You killed (.+?) with', description)
                     if match:
                         victims_part = match.group(1)
                         victims = re.split(r' and |, ', victims_part)
                         multi_kill_count = len([v for v in victims if v.strip()])
-            
-            # If we couldn't parse the description, fall back to title-based counting
-            if multi_kill_count == 0:
-                if 'Ace' in title:
-                    multi_kill_count = 5
-                elif 'Quad kill' in title:
-                    multi_kill_count = 4
-                elif 'Triple kill' in title:
-                    multi_kill_count = 3
-                elif 'Double kill' in title:
-                    multi_kill_count = 2
-                elif 'Multi kill' in title:
-                    # For generic "Multi kill", we can't determine count from title alone
-                    # This should ideally be parsed from description, so if we get here it's a fallback
-                    multi_kill_count = 2  # Conservative estimate
-            
-            # Add these kills to our total count
-            kill_count += multi_kill_count
+                    else:
+                        # Try without weapon info: "You killed X, Y, and Z"
+                        match = re.search(r'You killed (.+)', description)
+                        if match:
+                            victims_part = match.group(1)
+                            victims = re.split(r' and |, ', victims_part)
+                            multi_kill_count = len([v for v in victims if v.strip()])
+                
+                # If we couldn't parse the description, fall back to title-based counting
+                if multi_kill_count == 0:
+                    if 'Ace' in title:
+                        multi_kill_count = 5
+                    elif 'Quad kill' in title:
+                        multi_kill_count = 4
+                    elif 'Triple kill' in title:
+                        multi_kill_count = 3
+                    elif 'Double kill' in title:
+                        multi_kill_count = 2
+                    elif 'Multi kill' in title:
+                        # For generic "Multi kill", we can't determine count from title alone
+                        # This should ideally be parsed from description, so if we get here it's a fallback
+                        multi_kill_count = 2  # Conservative estimate
+                
+                # Add these kills to our total count
+                kill_count += multi_kill_count
 
-        # Step 4: Classify kill count
-        if kill_count >= 5:
-            label = 'Ace'
-        elif kill_count == 4:
-            label = 'Quad_kill'
-        elif kill_count == 3:
-            label = 'Triple_kill'
-        elif kill_count == 2:
-            label = 'Double_kill'
-        elif kill_count == 1:
-            label = 'Kill'
-        else:
-            label = 'Highlight'
+            # If we found kills in this round, use it!
+            if kill_count > 0:
+                # Step 4: Classify kill count
+                if kill_count >= 5:
+                    label = 'Ace'
+                elif kill_count == 4:
+                    label = 'Quad_kill'
+                elif kill_count == 3:
+                    label = 'Triple_kill'
+                elif kill_count == 2:
+                    label = 'Double_kill'
+                elif kill_count == 1:
+                    label = 'Kill'
+                else:
+                    label = 'Highlight'
 
-        # Step 5: Sanitize map name
-        safe_map = re.sub(r'[<>:"/\\|?*\n\r\t]', '', map_name).strip().replace(' ', '_')
-        return f'_{safe_map}-{label}'
+                # Step 5: Sanitize map name
+                safe_map = re.sub(r'[<>:"/\\|?*\n\r\t]', '', map_name).strip().replace(' ', '_')
+                return f'_{safe_map}-{label}'
+
+        # If no rounds had kills, use the last round as "Highlight"
+        if round_starts:
+            map_name = round_starts[-1]['map']
+            safe_map = re.sub(r'[<>:"/\\|?*\n\r\t]', '', map_name).strip().replace(' ', '_')
+            return f'_{safe_map}-Highlight'
+        
+        return ''
 
     except Exception as e:
         print(f"[WARN] Failed to extract CS2 label: {e}")
