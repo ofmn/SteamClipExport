@@ -38,21 +38,44 @@ def get_clip_title_if_cs2(base_path, appid):
     try:
         with open(timeline_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
+        entries = data.get('entries', [])
+        
+        map_name = None
+        event_title = None
 
-        for entry in data.get('entries', []):
+        # 1. Get map name from entry with "Start of round 1" and a description
+        for entry in entries:
+            if entry.get('title') == 'Start of round 1' and 'description' in entry:
+                raw_map = entry['description']
+                map_name = re.sub(r'[<>:"/\\|?*\n\r\t]', '', raw_map).strip().replace(' ', '_')
+                break
+
+        # 2. Find first valid event entry with non-zero duration and a title
+        for entry in entries:
             if (
                 entry.get('type') == 'event' and
                 entry.get('duration') and
                 entry.get('duration') != '0' and
                 'title' in entry
             ):
-                # Sanitize title: remove bad filename characters
-                title = re.sub(r'[<>:"/\\|?*\n\r\t]', '', entry['title'])
-                return f"_{title.strip().replace(' ', '_')}"
+                raw_title = entry['title']
+                event_title = re.sub(r'[<>:"/\\|?*\n\r\t]', '', raw_title).strip().replace(' ', '_')
+                break
+
+        if map_name and event_title:
+            return f"_{map_name}-{event_title}"
+        elif event_title:
+            return f"_{event_title}"
+        elif map_name:
+            return f"_{map_name}"
+        else:
+            return ''
     except Exception as e:
         print(f'[WARN] Failed to parse timeline for {appid}: {e}')
-    
-    return ''
+        return ''
+
+
+
 
 
 
