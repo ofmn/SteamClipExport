@@ -51,6 +51,11 @@ for folder in os.listdir(SOURCE_DIR):
     if not os.path.isdir(full_path):
         continue
 
+    marker_path = os.path.join(full_path, '.processed')
+    if os.path.exists(marker_path):
+        print(f'[SKIP] Already marked as processed: {folder}')
+        continue
+
     parsed = parse_folder_name(folder)
     if not parsed:
         continue
@@ -68,6 +73,17 @@ for folder in os.listdir(SOURCE_DIR):
         print(f'[SKIP] Inner folder not found in: {video_folder}')
         continue
 
+    output_folder = os.path.join(EXPORT_DIR, game)
+    os.makedirs(output_folder, exist_ok=True)
+    output_file = os.path.join(output_folder, f'{timestamp}.mp4')
+
+    if os.path.exists(output_file):
+        print(f'[SKIP] Output already exists: {output_file}')
+        # Still mark it processed to avoid checking again
+        with open(marker_path, 'w') as f:
+            f.write('already exported')
+        continue
+
     print(f'[INFO] Processing: {folder} → {game}\\{timestamp}.mp4')
 
     video_stream = concat_stream(inner_folder, 'stream0')
@@ -76,10 +92,6 @@ for folder in os.listdir(SOURCE_DIR):
     if not video_stream or not audio_stream:
         print('[ERROR] Failed to build one or both streams.')
         continue
-
-    output_folder = os.path.join(EXPORT_DIR, game)
-    os.makedirs(output_folder, exist_ok=True)
-    output_file = os.path.join(output_folder, f'{timestamp}.mp4')
 
     subprocess.run([
         'ffmpeg', '-y',
@@ -92,10 +104,10 @@ for folder in os.listdir(SOURCE_DIR):
     os.remove(video_stream)
     os.remove(audio_stream)
 
+    with open(marker_path, 'w') as f:
+        f.write('processed')
+
     print(f'[OK] Exported: {output_file}')
     found_any = True
 
-if not found_any:
-    print('[DONE] No valid clip folders were processed.')
-else:
-    print('[DONE] All valid clips have been processed.')
+print('[DONE] All valid clips have been checked.')
