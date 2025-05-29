@@ -21,6 +21,41 @@ def parse_folder_name(name):
     game = appid_map.get(appid, f"App_{appid}")
     return appid, game, dt.strftime('%Y-%m-%d_%H.%M.%S')
 
+def get_clip_title_if_cs2(base_path, appid):
+    if appid != '730':
+        return ''
+    
+    timeline_dir = os.path.join(base_path, 'timelines')
+    if not os.path.exists(timeline_dir):
+        return ''
+
+    timeline_file = next((f for f in os.listdir(timeline_dir) if f.endswith('.json')), None)
+    if not timeline_file:
+        return ''
+    
+    timeline_path = os.path.join(timeline_dir, timeline_file)
+
+    try:
+        with open(timeline_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        for entry in data.get('entries', []):
+            if (
+                entry.get('type') == 'event' and
+                entry.get('duration') and
+                entry.get('duration') != '0' and
+                'title' in entry
+            ):
+                # Sanitize title: remove bad filename characters
+                title = re.sub(r'[<>:"/\\|?*\n\r\t]', '', entry['title'])
+                return f"_{title.strip().replace(' ', '_')}"
+    except Exception as e:
+        print(f'[WARN] Failed to parse timeline for {appid}: {e}')
+    
+    return ''
+
+
+
 def concat_stream(stream_dir, stream_name):
     init = os.path.join(stream_dir, f'init-{stream_name}.m4s')
     if not os.path.exists(init):
@@ -75,7 +110,9 @@ for folder in os.listdir(SOURCE_DIR):
 
     output_folder = os.path.join(EXPORT_DIR, game)
     os.makedirs(output_folder, exist_ok=True)
-    output_file = os.path.join(output_folder, f'{timestamp}.mp4')
+    suffix = get_clip_title_if_cs2(full_path, appid)
+    output_file = os.path.join(output_folder, f'{timestamp}{suffix}.mp4')
+
 
     if os.path.exists(output_file):
         print(f'[SKIP] Output already exists: {output_file}')
