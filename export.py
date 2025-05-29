@@ -27,39 +27,23 @@ def extract_cs2_clip_label(timeline_path):
             data = json.load(f)
         entries = data.get('entries', [])
 
-        # Step 1: Find the LAST trigger event with duration > 0 (most recent highlight)
-        trigger = None
-        for e in entries:
-            if e.get('type') == 'event' and int(e.get('duration', '0')) > 0:
-                trigger = e
-        
-        if not trigger:
-            return ''
-
-        trigger_time = int(trigger['time'])
-
-        # Step 2: Work backwards from the trigger to find the nearest "Start of round"
+        # Step 1: Find the LAST "Start of round" event in the timeline
         round_start = None
         map_name = None
         
-        # Go backwards through entries to find the most recent round start before trigger
-        for i in range(len(entries) - 1, -1, -1):
-            e = entries[i]
+        for i, e in enumerate(entries):
             if (
                 e.get('type') == 'event' and
                 e.get('title', '').startswith('Start of round') and
                 'description' in e
             ):
-                this_time = int(e['time'])
-                if this_time <= trigger_time:
-                    round_start = {'index': i, 'time': this_time}
-                    map_name = e['description']
-                    break
+                round_start = {'index': i, 'time': int(e['time'])}
+                map_name = e['description']
 
         if not round_start:
             return ''
 
-        # Step 3: Find the next round start to define the round boundary
+        # Step 2: Find the next round start to define the round boundary (if any)
         round_end_time = None
         for i, e in enumerate(entries[round_start['index'] + 1:], start=round_start['index'] + 1):
             if (
@@ -69,7 +53,7 @@ def extract_cs2_clip_label(timeline_path):
                 round_end_time = int(e['time'])
                 break
 
-        # Step 4: Count ALL kills in the round (between round_start and round_end_time)
+        # Step 3: Count ALL kills from the round start to end of timeline (or next round)
         kill_events = []
         multi_kill_events = []
         
@@ -81,7 +65,7 @@ def extract_cs2_clip_label(timeline_path):
                 title = e.get('title', '')
                 
                 # Collect individual kill events
-                if title.startswith('You killed ') and not any(kw in title for kw in ['Double kill', 'Triple kill', 'Quad kill', 'Ace']):
+                if title.startswith('You killed ') and title != 'You killed yourself' and not any(kw in title for kw in ['Double kill', 'Triple kill', 'Quad kill', 'Ace', 'Multi kill']):
                     kill_events.append({
                         'time': t,
                         'title': title,
@@ -153,7 +137,7 @@ def extract_cs2_clip_label(timeline_path):
             # Add these kills to our total count
             kill_count += multi_kill_count
 
-        # Step 5: Classify kill count
+        # Step 4: Classify kill count
         if kill_count >= 5:
             label = 'Ace'
         elif kill_count == 4:
@@ -167,7 +151,7 @@ def extract_cs2_clip_label(timeline_path):
         else:
             label = 'Highlight'
 
-        # Step 6: Sanitize map name
+        # Step 5: Sanitize map name
         safe_map = re.sub(r'[<>:"/\\|?*\n\r\t]', '', map_name).strip().replace(' ', '_')
         return f'_{safe_map}-{label}'
 
