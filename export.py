@@ -39,18 +39,18 @@ def get_clip_title_if_cs2(base_path, appid):
         with open(timeline_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         entries = data.get('entries', [])
-        
+
         map_name = None
         event_title = None
 
-        # 1. Get map name from entry with "Start of round 1" and a description
+        # 1. Extract map name from "Start of round 1"
         for entry in entries:
             if entry.get('title') == 'Start of round 1' and 'description' in entry:
                 raw_map = entry['description']
                 map_name = re.sub(r'[<>:"/\\|?*\n\r\t]', '', raw_map).strip().replace(' ', '_')
                 break
 
-        # 2. Find first valid event entry with non-zero duration and a title
+        # 2. Extract event title with non-zero duration
         for entry in entries:
             if (
                 entry.get('type') == 'event' and
@@ -73,6 +73,7 @@ def get_clip_title_if_cs2(base_path, appid):
     except Exception as e:
         print(f'[WARN] Failed to parse timeline for {appid}: {e}')
         return ''
+
 
 
 
