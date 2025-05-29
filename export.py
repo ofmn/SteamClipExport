@@ -21,63 +21,134 @@ def parse_folder_name(name):
     game = appid_map.get(appid, f"App_{appid}")
     return appid, game, dt.strftime('%Y-%m-%d_%H.%M.%S')
 
-def get_clip_title_if_cs2(base_path, appid):
-    if appid != '730':
-        return ''
-    
-    timeline_dir = os.path.join(base_path, 'timelines')
-    if not os.path.exists(timeline_dir):
-        return ''
-
-    timeline_file = next((f for f in os.listdir(timeline_dir) if f.endswith('.json')), None)
-    if not timeline_file:
-        return ''
-    
-    timeline_path = os.path.join(timeline_dir, timeline_file)
-
+def extract_cs2_clip_label(timeline_path):
     try:
         with open(timeline_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         entries = data.get('entries', [])
 
-        map_name = None
-        event_title = None
-
-        # 1. Extract map name from "Start of round 1"
-        for entry in entries:
-            if entry.get('title') == 'Start of round 1' and 'description' in entry:
-                raw_map = entry['description']
-                map_name = re.sub(r'[<>:"/\\|?*\n\r\t]', '', raw_map).strip().replace(' ', '_')
-                break
-
-        # 2. Extract event title with non-zero duration
-        for entry in entries:
-            if (
-                entry.get('type') == 'event' and
-                entry.get('duration') and
-                entry.get('duration') != '0' and
-                'title' in entry
-            ):
-                raw_title = entry['title']
-                event_title = re.sub(r'[<>:"/\\|?*\n\r\t]', '', raw_title).strip().replace(' ', '_')
-                break
-
-        if map_name and event_title:
-            return f"_{map_name}-{event_title}"
-        elif event_title:
-            return f"_{event_title}"
-        elif map_name:
-            return f"_{map_name}"
-        else:
+        # Step 1: Find the trigger event with duration > 0
+        trigger = next((e for e in entries if e.get('type') == 'event' and int(e.get('duration', '0')) > 0), None)
+        if not trigger:
             return ''
+
+        trigger_time = int(trigger['time'])
+
+        # Step 2: Find the round start before the trigger and the next round start after
+        round_start = None
+        round_end_time = None
+        map_name = None
+
+        for i, e in enumerate(entries):
+            if (
+                e.get('type') == 'event' and
+                e.get('title', '').startswith('Start of round') and
+                'description' in e
+            ):
+                this_time = int(e['time'])
+                if this_time <= trigger_time:
+                    round_start = {'index': i, 'time': this_time}
+                    map_name = e['description']
+                elif round_start and this_time > trigger_time:
+                    round_end_time = this_time
+                    break
+
+        if not round_start:
+            return ''
+
+        # Step 3: Count ALL kills in the round (between round_start and round_end_time)
+        kill_events = []
+        multi_kill_events = []
+        
+        for e in entries[round_start['index']:]:
+            t = int(e['time'])
+            if round_end_time and t >= round_end_time:
+                break
+            if e.get('type') == 'event':
+                title = e.get('title', '')
+                
+                # Collect individual kill events
+                if title.startswith('You killed ') and not any(kw in title for kw in ['Double kill', 'Triple kill', 'Quad kill', 'Ace']):
+                    kill_events.append({
+                        'time': t,
+                        'title': title,
+                        'type': 'individual'
+                    })
+                
+                # Collect multi-kill events
+                elif any(kw in title for kw in ['Double kill', 'Triple kill', 'Quad kill', 'Ace']):
+                    multi_kill_events.append({
+                        'time': t,
+                        'title': title,
+                        'description': e.get('description', ''),
+                        'type': 'multi'
+                    })
+
+        # Count kills from individual events
+        kill_count = 0
+        for event in kill_events:
+            title = event['title']
+            # Try to extract victim names from "You killed X with Y" or "You killed X and Y with Z"
+            match = re.search(r'You killed (.+?)(?:\s+with|$)', title)
+            if match:
+                victims_part = match.group(1)
+                # Split by "and" to handle multiple victims in one event
+                victims = re.split(r' and ', victims_part)
+                individual_kills = len([v for v in victims if v.strip()])
+                kill_count += individual_kills
+            else:
+                # Fallback: if regex fails, assume it's one kill
+                kill_count += 1
+
+        # Add kills from multi-kill events
+        for event in multi_kill_events:
+            title = event['title']
+            description = event['description']
+            
+            # Try to extract victim names from description
+            multi_kill_count = 0
+            if 'You killed' in description and 'with the' in description:
+                match = re.search(r'You killed (.+?) with', description)
+                if match:
+                    victims_part = match.group(1)
+                    victims = re.split(r' and |, ', victims_part)
+                    multi_kill_count = len([v for v in victims if v.strip()])
+            
+            # If we couldn't parse the description, fall back to title-based counting
+            if multi_kill_count == 0:
+                if 'Ace' in title:
+                    multi_kill_count = 5
+                elif 'Quad kill' in title:
+                    multi_kill_count = 4
+                elif 'Triple kill' in title:
+                    multi_kill_count = 3
+                elif 'Double kill' in title:
+                    multi_kill_count = 2
+            
+            # Add these kills to our total count
+            kill_count += multi_kill_count
+
+        # Step 4: Classify kill count
+        if kill_count >= 5:
+            label = 'Ace'
+        elif kill_count == 4:
+            label = 'Quad_kill'
+        elif kill_count == 3:
+            label = 'Triple_kill'
+        elif kill_count == 2:
+            label = 'Double_kill'
+        elif kill_count == 1:
+            label = 'Kill'
+        else:
+            label = 'Highlight'
+
+        # Step 5: Sanitize map name
+        safe_map = re.sub(r'[<>:"/\\|?*\n\r\t]', '', map_name).strip().replace(' ', '_')
+        return f'_{safe_map}-{label}'
+
     except Exception as e:
-        print(f'[WARN] Failed to parse timeline for {appid}: {e}')
+        print(f"[WARN] Failed to extract CS2 label: {e}")
         return ''
-
-
-
-
-
 
 
 def concat_stream(stream_dir, stream_name):
@@ -134,18 +205,25 @@ for folder in os.listdir(SOURCE_DIR):
 
     output_folder = os.path.join(EXPORT_DIR, game)
     os.makedirs(output_folder, exist_ok=True)
-    suffix = get_clip_title_if_cs2(full_path, appid)
-    output_file = os.path.join(output_folder, f'{timestamp}{suffix}.mp4')
 
+    label = ''
+    if appid == '730':
+        timeline_dir = os.path.join(full_path, 'timelines')
+        if os.path.exists(timeline_dir):
+            timeline_file = next((f for f in os.listdir(timeline_dir) if f.endswith('.json')), None)
+            if timeline_file:
+                timeline_path = os.path.join(timeline_dir, timeline_file)
+                label = extract_cs2_clip_label(timeline_path)
+
+    output_file = os.path.join(output_folder, f'{timestamp}{label}.mp4')
 
     if os.path.exists(output_file):
         print(f'[SKIP] Output already exists: {output_file}')
-        # Still mark it processed to avoid checking again
         with open(marker_path, 'w') as f:
             f.write('already exported')
         continue
 
-    print(f'[INFO] Processing: {folder} → {game}\\{timestamp}.mp4')
+    print(f'[INFO] Processing: {folder} → {game}\\{timestamp}{label}.mp4')
 
     video_stream = concat_stream(inner_folder, 'stream0')
     audio_stream = concat_stream(inner_folder, 'stream1')
