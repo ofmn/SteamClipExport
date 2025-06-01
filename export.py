@@ -46,7 +46,11 @@ def extract_cs2_clip_label(timeline_path):
             return ''
 
         # Step 2: Try rounds starting from the last one, working backwards
-        for round_idx in range(len(round_starts) - 1, -1, -1):
+        # Limit to current round + max 1 round back (since clips are 120s)
+        max_rounds_back = min(2, len(round_starts))
+        start_idx = len(round_starts) - max_rounds_back
+        
+        for round_idx in range(len(round_starts) - 1, start_idx - 1, -1):
             round_start = round_starts[round_idx]
             map_name = round_start['map']
             
