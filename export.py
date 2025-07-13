@@ -4,9 +4,9 @@ import subprocess
 from datetime import datetime, timedelta
 import re
 
-SOURCE_DIR = r'C:\Temp\SteamTest'
-EXPORT_DIR = r'C:\Temp\SteamExports'
-APPID_MAP_FILE = r'C:\Temp\appid_map.json'
+SOURCE_DIR = r'Z:\Media\Steam Recording\clips'
+EXPORT_DIR = r'Z:\Media\SteamReplay'
+APPID_MAP_FILE = r'Z:\Media\appid_map.json'
 
 with open(APPID_MAP_FILE, 'r') as f:
     appid_map = json.load(f)
