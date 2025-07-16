@@ -4,7 +4,8 @@ import subprocess
 from datetime import datetime, timedelta
 import re
 
-SOURCE_DIR = r'Z:\Media\Steam Recording\clips'
+# New: Steam userdata root
+STEAM_USERDATA_ROOT = r'C:\Program Files (x86)\Steam\userdata'
 EXPORT_DIR = r'Z:\Media\SteamReplay'
 APPID_MAP_FILE = r'Z:\Media\appid_map.json'
 
@@ -199,79 +200,87 @@ def concat_stream(stream_dir, stream_name):
                 outfile.write(f.read())
     return output
 
+# --- MAIN LOGIC REWRITE STARTS HERE ---
+
+def find_all_clips_dirs():
+    clips_dirs = []
+    if not os.path.exists(STEAM_USERDATA_ROOT):
+        print(f'[ERROR] Steam userdata root not found: {STEAM_USERDATA_ROOT}')
+        return clips_dirs
+    for account_id in os.listdir(STEAM_USERDATA_ROOT):
+        account_path = os.path.join(STEAM_USERDATA_ROOT, account_id)
+        if not os.path.isdir(account_path):
+            continue
+        clips_path = os.path.join(account_path, 'gamerecordings', 'clips')
+        if os.path.exists(clips_path) and os.path.isdir(clips_path):
+            clips_dirs.append((account_id, clips_path))
+    return clips_dirs
+
 found_any = False
+all_clips_dirs = find_all_clips_dirs()
 
-for folder in os.listdir(SOURCE_DIR):
-    full_path = os.path.join(SOURCE_DIR, folder)
-    if not os.path.isdir(full_path):
-        continue
-
-    marker_path = os.path.join(full_path, '.processed')
-    if os.path.exists(marker_path):
-        print(f'[SKIP] Already marked as processed: {folder}')
-        continue
-
-    parsed = parse_folder_name(folder)
-    if not parsed:
-        continue
-
-    appid, game, timestamp = parsed
-    video_folder = os.path.join(full_path, 'video')
-    inner_folder = None
-
-    for sub in os.listdir(video_folder):
-        if sub.startswith(f'bg_{appid}_'):
-            inner_folder = os.path.join(video_folder, sub)
-            break
-
-    if not inner_folder or not os.path.exists(inner_folder):
-        print(f'[SKIP] Inner folder not found in: {video_folder}')
-        continue
-
-    output_folder = os.path.join(EXPORT_DIR, game)
-    os.makedirs(output_folder, exist_ok=True)
-
-    label = ''
-    if appid == '730':
-        timeline_dir = os.path.join(full_path, 'timelines')
-        if os.path.exists(timeline_dir):
-            timeline_file = next((f for f in os.listdir(timeline_dir) if f.endswith('.json')), None)
-            if timeline_file:
-                timeline_path = os.path.join(timeline_dir, timeline_file)
-                label = extract_cs2_clip_label(timeline_path)
-
-    output_file = os.path.join(output_folder, f'{timestamp}{label}.mp4')
-
-    if os.path.exists(output_file):
-        print(f'[SKIP] Output already exists: {output_file}')
-        with open(marker_path, 'w') as f:
-            f.write('already exported')
-        continue
-
-    print(f'[INFO] Processing: {folder} → {game}\\{timestamp}{label}.mp4')
-
-    video_stream = concat_stream(inner_folder, 'stream0')
-    audio_stream = concat_stream(inner_folder, 'stream1')
-
-    if not video_stream or not audio_stream:
-        print('[ERROR] Failed to build one or both streams.')
-        continue
-
-    subprocess.run([
-        'ffmpeg', '-y',
-        '-i', video_stream,
-        '-i', audio_stream,
-        '-c', 'copy',
-        output_file
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    os.remove(video_stream)
-    os.remove(audio_stream)
-
-    with open(marker_path, 'w') as f:
-        f.write('processed')
-
-    print(f'[OK] Exported: {output_file}')
-    found_any = True
-
-print('[DONE] All valid clips have been checked.')
+if not all_clips_dirs:
+    print('[INFO] No Steam accounts with clips found.')
+else:
+    for account_id, SOURCE_DIR in all_clips_dirs:
+        print(f'\n[ACCOUNT] Processing Steam account: {account_id}')
+        folders = [f for f in os.listdir(SOURCE_DIR) if os.path.isdir(os.path.join(SOURCE_DIR, f))]
+        unprocessed = []
+        for folder in folders:
+            full_path = os.path.join(SOURCE_DIR, folder)
+            marker_path = os.path.join(full_path, '.processed')
+            if not os.path.exists(marker_path):
+                unprocessed.append(folder)
+        print(f'[INFO] Found {len(unprocessed)} unprocessed clip folders in account {account_id}.')
+        for folder in unprocessed:
+            full_path = os.path.join(SOURCE_DIR, folder)
+            marker_path = os.path.join(full_path, '.processed')
+            parsed = parse_folder_name(folder)
+            if not parsed:
+                continue
+            appid, game, timestamp = parsed
+            video_folder = os.path.join(full_path, 'video')
+            inner_folder = None
+            for sub in os.listdir(video_folder):
+                if sub.startswith(f'bg_{appid}_'):
+                    inner_folder = os.path.join(video_folder, sub)
+                    break
+            if not inner_folder or not os.path.exists(inner_folder):
+                print(f'[SKIP] Inner folder not found in: {video_folder}')
+                continue
+            output_folder = os.path.join(EXPORT_DIR, game)
+            os.makedirs(output_folder, exist_ok=True)
+            label = ''
+            if appid == '730':
+                timeline_dir = os.path.join(full_path, 'timelines')
+                if os.path.exists(timeline_dir):
+                    timeline_file = next((f for f in os.listdir(timeline_dir) if f.endswith('.json')), None)
+                    if timeline_file:
+                        timeline_path = os.path.join(timeline_dir, timeline_file)
+                        label = extract_cs2_clip_label(timeline_path)
+            output_file = os.path.join(output_folder, f'{timestamp}{label}.mp4')
+            if os.path.exists(output_file):
+                print(f'[SKIP] Output already exists: {output_file}')
+                with open(marker_path, 'w') as f:
+                    f.write('already exported')
+                continue
+            print(f'[INFO] Processing: {folder} → {game}\\{timestamp}{label}.mp4')
+            video_stream = concat_stream(inner_folder, 'stream0')
+            audio_stream = concat_stream(inner_folder, 'stream1')
+            if not video_stream or not audio_stream:
+                print('[ERROR] Failed to build one or both streams.')
+                continue
+            subprocess.run([
+                'ffmpeg', '-y',
+                '-i', video_stream,
+                '-i', audio_stream,
+                '-c', 'copy',
+                output_file
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            os.remove(video_stream)
+            os.remove(audio_stream)
+            with open(marker_path, 'w') as f:
+                f.write('processed')
+            print(f'[OK] Exported: {output_file}')
+            found_any = True
+    print('\n[DONE] All valid clips have been checked.')
