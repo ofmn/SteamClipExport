@@ -7,7 +7,7 @@ import re
 # New: Steam userdata root
 STEAM_USERDATA_ROOT = r'C:\Program Files (x86)\Steam\userdata'
 EXPORT_DIR = r'Z:\Media\SteamReplay'
-APPID_MAP_FILE = r'Z:\Media\appid_map.json'
+APPID_MAP_FILE = os.path.join(EXPORT_DIR, 'appid_map.json')
 
 with open(APPID_MAP_FILE, 'r') as f:
     appid_map = json.load(f)
